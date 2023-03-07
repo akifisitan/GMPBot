@@ -5,6 +5,7 @@ from pymongo import MongoClient
 # Load environment variables
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+SERVER_IDS = [int(server_id) for server_id in os.getenv("SERVER_IDS").split(",")]
 DATABASE_URI = os.getenv("MONGODB_URI")
 CLIENT = MongoClient(DATABASE_URI)
 
@@ -14,7 +15,7 @@ try:
     print("Connected to MongoDB")
     # Get the database
     DATABASE = CLIENT["development"]
-    print(f"Collection names are: {DATABASE.list_collection_names()}")
+    participants = DATABASE["participants"]
     CHECK = True
 except Exception as e:
     print(f"Error connecting to MongoDB: {e}")
