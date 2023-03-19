@@ -1,25 +1,48 @@
 from config import OPENAI_API_KEY, SERVER_IDS
-import openai
 import asyncio
+import aiohttp
+import json
 from nextcord import SlashOption, slash_command
 from nextcord.ext.commands import Cog
 
-openai.api_key = OPENAI_API_KEY
+
+# Non-blocking version of the API request
+async def create_completion(model, messages, *, temperature=0.7, presence_penalty=0.6,
+                            frequency_penalty=0.6, max_tokens=400):
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {OPENAI_API_KEY}"
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "presence_penalty": presence_penalty,
+        "frequency_penalty": frequency_penalty,
+        "max_tokens": max_tokens
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, data=json.dumps(payload), timeout=20) as resp:
+            return await resp.json()
 
 
 # Takes the question, the current dialog, and the mode (0 = normal, 1 = remember, 2 = remember and use)
 # Sends the question to the API, and returns the response and the number of tokens used
-async def gpt_dialog(question: str, current_dialog: list, mode: int):
+async def gpt_dialog(question: str, current_dialog=None, mode=0) -> tuple[str, int]:
+    current_dialog = current_dialog if current_dialog else []
     if mode == 0:
         current_dialog.clear()
     current_dialog.append({"content": question, "role": "user"})
     print(f"Current dialog is: {current_dialog}")
     try:
-        response = openai.ChatCompletion.create(model="gpt-3.5-turbo", temperature=0.7, presence_penalty=0.6,
-                                                frequency_penalty=0.6, messages=current_dialog, max_tokens=400)
+        response = await create_completion(model="gpt-3.5-turbo", messages=current_dialog, max_tokens=300,
+                                           temperature=0.7, presence_penalty=0.6, frequency_penalty=0.6)
+    except asyncio.TimeoutError:
+        return "Request timed out!", 0
     except Exception as e:
-        print(f"Error on API request: {e}")
-        return "Error when requesting response from the API.", 0
+        print(e)
+        return "Error: API request failed", 0
     # Ensures ChatGPT remembers the answers it gave, but uses a lot more tokens
     if mode == 2:
         current_dialog.append({"content": response['choices'][0]['message']['content'],
@@ -27,7 +50,7 @@ async def gpt_dialog(question: str, current_dialog: list, mode: int):
     return response['choices'][0]['message']['content'], int(response['usage']['total_tokens'])
 
 
-# Sends a message to the channel, but catches any errors
+# Sends a message to the channel ignoring any errors
 async def send_message(interaction, message: str):
     try:
         await interaction.channel.send(content=message)
@@ -39,6 +62,23 @@ class ChatGPT(Cog):
     def __init__(self, bot):
         self.bot = bot
         self.active_sessions = set()
+
+    """
+    @Cog.listener("on_message")
+    async def chatgpt(self, message):
+        if message.author.id not in self.active_sessions:
+            return
+        if message.content.lower() in {"exit", "quit", "stop", "end"}:
+            self.active_sessions.remove(message.author.id)
+        async with message.channel.typing():
+            response = await gpt_dialog(message.content)
+        if len(response[0]) <= 2000:
+            await send_message(message, response[0])
+        else:
+            paragraphs = response[0].split("\n\n")
+            for paragraph in paragraphs:
+                await send_message(message, paragraph)
+    """
 
     @slash_command(name="chatgpt", description="Ask ChatGPT anything", guild_ids=SERVER_IDS)
     async def ask_chatgpt(self, interaction,
