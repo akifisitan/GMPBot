@@ -8,6 +8,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 SERVER_IDS = [int(server_id) for server_id in os.getenv("SERVER_IDS").split(",")]
 DATABASE_URI = os.getenv("MONGODB_URI")
 CLIENT = MongoClient(DATABASE_URI)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Test if the connection to the database was successful, exit the script if not
 try:

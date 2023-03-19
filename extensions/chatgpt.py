@@ -1,0 +1,92 @@
+from config import OPENAI_API_KEY, SERVER_IDS
+import openai
+import asyncio
+from nextcord import SlashOption, slash_command
+from nextcord.ext.commands import Cog
+
+openai.api_key = OPENAI_API_KEY
+
+
+# Takes the question, the current dialog, and the mode (0 = normal, 1 = remember, 2 = remember and use)
+# Sends the question to the API, and returns the response and the number of tokens used
+async def gpt_dialog(question: str, current_dialog: list, mode: int):
+    if mode == 0:
+        current_dialog.clear()
+    current_dialog.append({"content": question, "role": "user"})
+    print(f"Current dialog is: {current_dialog}")
+    try:
+        response = openai.ChatCompletion.create(model="gpt-3.5-turbo", temperature=0.7, presence_penalty=0.6,
+                                                frequency_penalty=0.6, messages=current_dialog, max_tokens=400)
+    except Exception as e:
+        print(f"Error on API request: {e}")
+        return "Error when requesting response from the API.", 0
+    # Ensures ChatGPT remembers the answers it gave, but uses a lot more tokens
+    if mode == 2:
+        current_dialog.append({"content": response['choices'][0]['message']['content'],
+                               "role": response['choices'][0]['message']['role']})
+    return response['choices'][0]['message']['content'], int(response['usage']['total_tokens'])
+
+
+# Sends a message to the channel, but catches any errors
+async def send_message(interaction, message: str):
+    try:
+        await interaction.channel.send(content=message)
+    except Exception as e:
+        print(e)
+
+
+class ChatGPT(Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.active_sessions = set()
+
+    @slash_command(name="chatgpt", description="Ask ChatGPT anything", guild_ids=SERVER_IDS)
+    async def ask_chatgpt(self, interaction,
+                          mode: int = SlashOption(
+                              description="The mode to use (Default is incomplete)",
+                              choices={"Incomplete": 0, "Semi-Complete": 1, "Complete": 2},
+                              default=0)
+                          ):
+        if interaction.user.id in self.active_sessions:
+            return await interaction.send(
+                content="You already have a session running! Type exit or wait for it to time out.", ephemeral=True)
+        await interaction.send(content="Starting a new session...", ephemeral=True)
+        current_dialog, used_tokens, busy, num_questions = [], 0, False, 0
+        self.active_sessions.add(interaction.user.id)
+        await interaction.channel.send(f"Hey {interaction.user.mention}! How can I assist you today?")
+
+        def check(message):
+            return message.author.id == interaction.user.id and message.channel.id == interaction.channel.id \
+                and not busy
+
+        while True:
+            try:
+                question = await self.bot.wait_for('message', timeout=300, check=check)
+            except asyncio.TimeoutError:
+                question = None
+            except Exception as e:
+                self.active_sessions.remove(interaction.user.id)
+                return await interaction.edit_original_message(content=f"Error: {e}")
+            if not question or question.content.lower() in {"exit", "quit", "stop", "end"}:
+                self.active_sessions.remove(interaction.user.id)
+                print(f"Session stats for {interaction.user}: {used_tokens} tokens used, "
+                      f"{num_questions} messages sent.")
+                await interaction.edit_original_message(content="Session ended!")
+                return await send_message(interaction, "Bye!")
+            async with interaction.channel.typing():
+                busy = True
+                response = await gpt_dialog(question.content, current_dialog, mode)
+                num_questions += 1
+                used_tokens += response[1]
+            if len(response[0]) <= 2000:
+                await send_message(interaction, response[0])
+            else:
+                paragraphs = response[0].split("\n\n")
+                for paragraph in paragraphs:
+                    await send_message(interaction, paragraph)
+            busy = False
+            print(f"Used tokens: {used_tokens} (+{response[1]})")
+
+
+def setup(bot):
+    bot.add_cog(ChatGPT(bot))
