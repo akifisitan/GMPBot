@@ -126,10 +126,9 @@ class ChatGPT(Cog):
         if interaction.user.id in self.active_sessions:
             return await interaction.send(
                 content="You already have a session running! Type exit or wait for it to time out.", ephemeral=True)
-        await interaction.send(content="Starting a new session...", ephemeral=True)
+        await interaction.send(content=f"How can I assist you today?", ephemeral=True)
         current_dialog, used_tokens, busy, num_questions = [], 0, False, 0
         self.active_sessions.add(interaction.user.id)
-        await interaction.channel.send(f"Hey {interaction.user.mention}! How can I assist you today?")
 
         def check(message):
             return message.author.id == interaction.user.id and message.channel.id == interaction.channel.id \
@@ -147,8 +146,7 @@ class ChatGPT(Cog):
                 self.active_sessions.remove(interaction.user.id)
                 print(f"Session stats for {interaction.user}: {used_tokens} tokens used, "
                       f"{num_questions} messages sent.")
-                await interaction.edit_original_message(content="Session ended!")
-                return await send_message(interaction, "Bye!")
+                return await interaction.edit_original_message(content="Session ended!")
             async with interaction.channel.typing():
                 busy = True
                 response = await gpt_dialog(question.content, current_dialog, mode, max_tokens=max_tokens)
