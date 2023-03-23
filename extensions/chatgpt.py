@@ -13,13 +13,13 @@ async def get_usage(date):
         "Authorization": f"Bearer {OPENAI_API_KEY}"
     }
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers, timeout=30) as resp:
-            return await resp.json()
+        async with session.get(url, headers=headers, timeout=180) as response:
+            return await response.json()
 
 
 # Non-blocking version of the API request
 async def create_completion(model, messages, *, temperature=0.7, presence_penalty=0.6,
-                            frequency_penalty=0.6, max_tokens=400):
+                            frequency_penalty=0.6, max_tokens=400, timeout=180):
     url = "https://api.openai.com/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
@@ -34,21 +34,20 @@ async def create_completion(model, messages, *, temperature=0.7, presence_penalt
         "max_tokens": max_tokens
     }
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, data=json.dumps(payload), timeout=30) as resp:
-            return await resp.json()
+        async with session.post(url, headers=headers, data=json.dumps(payload), timeout=timeout) as response:
+            return await response.json()
 
 
-# Takes the question, the current dialog, and the mode (0 = normal, 1 = remember, 2 = remember and use)
-# Sends the question to the API, and returns the response and the number of tokens used
-async def gpt_dialog(question: str, current_dialog=None, mode=0, max_tokens=400) -> tuple[str, int]:
-    current_dialog = current_dialog if current_dialog else []
-    if mode == 0:
+# Takes the question, the current dialog, and the mode (0 = forget all, 1 = remember only user input, 2 = remember all)
+# Sends the question to the API, then returns the response and the number of tokens used
+async def gpt_request(question: str, current_dialog, mode=0, max_tokens=400, timeout=180) -> tuple[str, int]:
+    if len(current_dialog) > 0 and mode == 0:
         current_dialog.clear()
     current_dialog.append({"content": question, "role": "user"})
-    print(f"Current dialog is: {current_dialog}")
+    # print(f"Current dialog is: {current_dialog}")
     try:
-        response = await create_completion(model="gpt-3.5-turbo", messages=current_dialog, max_tokens=max_tokens,
-                                           temperature=0.7, presence_penalty=0.6, frequency_penalty=0.6)
+        response = await create_completion(model="gpt-3.5-turbo", messages=current_dialog,
+                                           max_tokens=max_tokens, timeout=timeout)
     except asyncio.TimeoutError:
         return "Request timed out!", 0
     except Exception as e:
@@ -58,8 +57,11 @@ async def gpt_dialog(question: str, current_dialog=None, mode=0, max_tokens=400)
     if mode == 2:
         current_dialog.append({"content": response['choices'][0]['message']['content'],
                                "role": response['choices'][0]['message']['role']})
+    print(current_dialog)
     return response['choices'][0]['message']['content'], int(response['usage']['total_tokens'])
 
+
+# async def gpt_dialog
 
 # Sends a message to the channel ignoring any errors
 async def send_message(interaction, message: str):
@@ -74,58 +76,56 @@ class ChatGPT(Cog):
         self.bot = bot
         self.active_sessions = set()
 
-    """
-    @Cog.listener("on_message")
-    async def chatgpt(self, message):
-        if message.author.id not in self.active_sessions:
-            return
-        if message.content.lower() in {"exit", "quit", "stop", "end"}:
-            self.active_sessions.remove(message.author.id)
-        async with message.channel.typing():
-            response = await gpt_dialog(message.content)
+    @slash_command(name="chatgpt", guild_ids=SERVER_IDS)
+    async def chatgpt(self, interaction):
+        pass
+
+    # Ask ChatGPT a single question
+    @chatgpt.subcommand(name="ask", description="Ask ChatGPT a question")
+    async def chatgpt_ask(self, interaction):
+        await interaction.send(content=f"How can I assist you today?", ephemeral=True)
+
+        def check(message):
+            return message.author.id == interaction.user.id and message.channel.id == interaction.channel.id
+
+        try:
+            question = await self.bot.wait_for('message', timeout=300, check=check)
+        except Exception as e:
+            return await interaction.edit_original_message(content=f"Error: {e}")
+        async with interaction.channel.typing():
+            response = await gpt_request(question.content)
         if len(response[0]) <= 2000:
-            await send_message(message, response[0])
+            await send_message(interaction, response[0])
         else:
             paragraphs = response[0].split("\n\n")
             for paragraph in paragraphs:
-                await send_message(message, paragraph)
-    """
-    @slash_command(name="usage", description="Learn usage", guild_ids=SERVER_IDS)
-    async def usage_chatgpt(self, interaction,
-                            day: int = SlashOption(min_value=1, max_value=31,
-                                                   description="The date to check usage for (YYYY-MM-DD)"),
-                            month: int = SlashOption(min_value=1, max_value=12,
-                                                     description="The date to check usage for (YYYY-MM-DD)"),
-                            year: int = SlashOption(min_value=2022, max_value=2024, default="2023",
-                                                    description="The date to check usage for (YYYY-MM-DD)")
-                            ):
-        await interaction.send(content="Getting usage...", ephemeral=True)
-        try:
-            usage = await get_usage(f"{year}-{month}-{day}")
-        except Exception as e:
-            print(e)
-            return await interaction.edit_original_message(content="Error: API request failed")
-        used_tokens, n_requests = 0, 0
-        for entry in usage['data']:
-            used_tokens += entry['n_generated_tokens_total']
-            n_requests += entry['n_requests']
-        print(f"Used tokens: {used_tokens}, Number of requests: {n_requests}")
-        await interaction.edit_original_message(content=f"You have used {used_tokens} tokens in {day}/{month}/{year}")
+                await send_message(interaction, paragraph)
+        await interaction.edit_original_message(content=f"Thanks for using ChatGPT!")
 
-    @slash_command(name="chatgpt", description="Ask ChatGPT anything", guild_ids=SERVER_IDS)
-    async def ask_chatgpt(self, interaction,
-                          mode: int = SlashOption(
-                              description="The mode to use (Default is incomplete)",
-                              choices={"Incomplete": 0, "Semi-Complete": 1, "Complete": 2},
-                              default=0),
-                          max_tokens: int = SlashOption(
-                              description="The maximum amount of tokens to use (Default is 400)",
-                              choices=[30, 50, 100, 200, 300, 400, 500, 750, 1000],
-                              default=400)
-                          ):
+    # Have a dialog with ChatGPT (Admin only for now)
+    @chatgpt.subcommand(name="dialog", description="Have a dialog with ChatGPT")
+    async def chatgpt_dialog(self, interaction,
+                             mode: int = SlashOption(
+                                 description="The mode to use (Default is incomplete)",
+                                 choices={"Incomplete": 0, "Semi-Complete": 1, "Complete": 2},
+                                 default=0),
+                             max_tokens: int = SlashOption(
+                                 description="The maximum amount of tokens to use (Default is 400)",
+                                 choices=[30, 50, 100, 200, 300, 400, 500, 750, 1000],
+                                 default=400),
+                             timeout: int = SlashOption(
+                                 description="The amount of time to wait for a response (Default is 180 seconds)",
+                                 default=180,
+                                 min_value=30,
+                                 max_value=270)
+                             ):
+        if interaction.user.id not in {434647152552312853, 238479694423392256}:
+            return await interaction.send(content="Use /chatgpt ask for now.", ephemeral=True)
         if interaction.user.id in self.active_sessions:
             return await interaction.send(
                 content="You already have a session running! Type exit or wait for it to time out.", ephemeral=True)
+        if mode != 0 and interaction.user.id not in {434647152552312853, 238479694423392256}:
+            return await interaction.send(content="You don't have permission to use this mode!", ephemeral=True)
         await interaction.send(content=f"How can I assist you today?", ephemeral=True)
         current_dialog, used_tokens, busy, num_questions = [], 0, False, 0
         self.active_sessions.add(interaction.user.id)
@@ -149,7 +149,8 @@ class ChatGPT(Cog):
                 return await interaction.edit_original_message(content="Session ended!")
             async with interaction.channel.typing():
                 busy = True
-                response = await gpt_dialog(question.content, current_dialog, mode, max_tokens=max_tokens)
+                response = await gpt_request(question.content, current_dialog, mode=mode,
+                                             max_tokens=max_tokens, timeout=timeout)
                 num_questions += 1
                 used_tokens += response[1]
             if len(response[0]) <= 2000:
@@ -159,7 +160,29 @@ class ChatGPT(Cog):
                 for paragraph in paragraphs:
                     await send_message(interaction, paragraph)
             busy = False
-            print(f"Used tokens: {used_tokens} (+{response[1]})")
+            # print(f"Used tokens: {used_tokens} (+{response[1]})")
+
+    @chatgpt.subcommand(name="usage", description="Check token usage by date")
+    async def chatgpt_usage(self, interaction,
+                            day: int = SlashOption(min_value=1, max_value=31,
+                                                   description="The day to check usage for (01-31)"),
+                            month: int = SlashOption(min_value=1, max_value=12,
+                                                     description="The month to check usage for (01-12)"),
+                            ):
+        if interaction.user.id not in {434647152552312853, 238479694423392256}:
+            return await interaction.send(content="You do not have permission to use this command.", ephemeral=True)
+        await interaction.send(content="Getting usage...", ephemeral=True)
+        try:
+            usage = await get_usage(f"2023-{month}-{day}")
+        except Exception as e:
+            return await interaction.edit_original_message(content=f"Error: {e}")
+        used_tokens, n_requests = 0, 0
+        for entry in usage['data']:
+            used_tokens += entry['n_generated_tokens_total']
+            n_requests += entry['n_requests']
+        # print(f"Used tokens: {used_tokens}, Number of requests: {n_requests}")
+        await interaction.edit_original_message(
+            content=f"```Usage ({day}/{month}/2023)\nUsed tokens: {used_tokens}\nNumber of requests: {n_requests}```")
 
 
 def setup(bot):
