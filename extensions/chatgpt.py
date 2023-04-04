@@ -18,8 +18,7 @@ async def get_usage(date):
 
 
 # Non-blocking version of the API request
-async def create_completion(model, messages, *, temperature=0.7, presence_penalty=0.6,
-                            frequency_penalty=0.6, max_tokens=400, timeout=180):
+async def create_completion(model, messages, max_tokens, timeout):
     url = "https://api.openai.com/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
@@ -28,9 +27,6 @@ async def create_completion(model, messages, *, temperature=0.7, presence_penalt
     payload = {
         "model": model,
         "messages": messages,
-        "temperature": temperature,
-        "presence_penalty": presence_penalty,
-        "frequency_penalty": frequency_penalty,
         "max_tokens": max_tokens
     }
     async with aiohttp.ClientSession() as session:
@@ -58,7 +54,11 @@ async def gpt_request(question: str, current_dialog, mode=0, max_tokens=400, tim
         current_dialog.append({"content": response['choices'][0]['message']['content'],
                                "role": response['choices'][0]['message']['role']})
     print(current_dialog)
-    return response['choices'][0]['message']['content'], int(response['usage']['total_tokens'])
+    try:
+        return response['choices'][0]['message']['content'], int(response['usage']['total_tokens'])
+    except Exception as e:
+        print(f"{e}: {response}")
+        return "Error: API request failed", 0
 
 
 # async def gpt_dialog
@@ -93,7 +93,7 @@ class ChatGPT(Cog):
         except Exception as e:
             return await interaction.edit_original_message(content=f"Error: {e}")
         async with interaction.channel.typing():
-            response = await gpt_request(question.content)
+            response = await gpt_request(question.content, [])
         if len(response[0]) <= 2000:
             await send_message(interaction, response[0])
         else:
