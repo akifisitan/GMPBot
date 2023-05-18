@@ -8,6 +8,7 @@ import random
 database = DATABASE["participants"]
 giveaway_channels = {1074886518969204748}
 
+
 class Giveaway:
     def __init__(self, message_id, num_winners=1):
         self.message_id = message_id
