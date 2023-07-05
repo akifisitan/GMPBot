@@ -1,4 +1,4 @@
-import os
+from os import listdir
 import nextcord
 from nextcord.ext.commands import Bot
 from config import BOT_TOKEN
@@ -21,11 +21,9 @@ async def on_ready():
 
 # Load extensions & run the bot
 def main():
-    """for extension in filter(lambda x: x.endswith(".py"), os.listdir("extensions")):
-        bot.load_extension(f"extensions.{extension[:-3]}")"""
-    finished_extensions = ["reminders", "rps"]
-    for extension in finished_extensions:
-        bot.load_extension(f"extensions.{extension}")
+    extensions_list = listdir("extensions")
+    for extension in filter(lambda x: x.endswith(".py"), extensions_list):
+        bot.load_extension(f"extensions.{extension[:-3]}")
     bot.run(BOT_TOKEN)
 
 

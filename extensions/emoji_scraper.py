@@ -8,19 +8,15 @@ from nextcord.ext.commands import Cog
 import logging
 
 
-async def get_emojis_from_server(server):
-    return server.emojis
-
-
 async def emoji_save_zip_delete(emoji, zip_file, num) -> str:
-    file = f"{emoji.name}_{num}.gif" if emoji.animated else f"{emoji.name}_{num}.png"
-    await emoji.save(file)
-    logging.info(f"Saved {file} to disk")
-    zip_file.write(file)
-    logging.info(f"Added {file} to zip file")
-    os.remove(file)
-    logging.info(f"Deleted {file}")
-    return file
+    file_name = f"{emoji.name}_{num}.gif" if emoji.animated else f"{emoji.name}_{num}.png"
+    await emoji.save(file_name)
+    logging.info(f"Saved {file_name} to disk")
+    zip_file.write(file_name)
+    logging.info(f"Added {file_name} to zip file")
+    os.remove(file_name)
+    logging.info(f"Deleted {file_name}")
+    return file_name
 
 
 class EmojiScraper(Cog):

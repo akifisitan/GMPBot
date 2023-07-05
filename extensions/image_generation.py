@@ -54,9 +54,6 @@ class ImageGeneration(Cog):
                                  choices=["256x256", "512x512", "1024x1024"],
                                  default="256x256"
                              )):
-        if size != "256x256":
-            return await interaction.send(content=f"Only staff can generate images larger than 256x256 for now.",
-                                          ephemeral=True)
         await interaction.send(content=f"Generating image with prompt: {prompt}")
         try:
             response: str = await image_request(prompt=prompt, size=size, timeout=180)
