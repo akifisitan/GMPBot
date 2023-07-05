@@ -1,4 +1,5 @@
-from config import OPENAI_API_KEY, SERVER_IDS
+from config import OPENAI_API_KEY
+from data.servers import SERVER_IDS
 from nextcord import SlashOption, slash_command, Interaction
 from nextcord.ext.commands import Cog
 import aiohttp

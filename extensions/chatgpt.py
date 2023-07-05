@@ -1,4 +1,5 @@
-from config import OPENAI_API_KEY, SERVER_IDS
+from config import OPENAI_API_KEY
+from data.servers import SERVER_IDS
 import asyncio
 import aiohttp
 import json
@@ -40,7 +41,6 @@ async def gpt_request(question: str, current_dialog, mode=0, max_tokens=400, tim
     if len(current_dialog) > 0 and mode == 0:
         current_dialog.clear()
     current_dialog.append({"content": question, "role": "user"})
-    # print(f"Current dialog is: {current_dialog}")
     try:
         response = await create_completion(model="gpt-3.5-turbo", messages=current_dialog,
                                            max_tokens=max_tokens, timeout=timeout)
