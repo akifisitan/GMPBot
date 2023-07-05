@@ -1,4 +1,4 @@
-from config import SERVER_IDS
+from data.servers import SERVER_IDS
 import os
 import zipfile
 import asyncio
