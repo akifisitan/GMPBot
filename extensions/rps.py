@@ -1,47 +1,44 @@
-# GET IT TWISTED
+from data.servers import SERVER_IDS
+from data.rps_players import get_rps_players, RPSPlayer, update_player, insert_new_player
+from helpers.colors import random_color
+from helpers.ui import RPSGameView, PaginationView
 import nextcord
 from nextcord import slash_command, SlashOption
 from nextcord.ext.commands import Cog
 import random as rnd
-import asyncio
-from config import SERVER_IDS, participants
-
-# TODO: Add a way to view the leaderboard
-# TODO: Add a way to view the stats of a player
+from io import StringIO
 
 
-def add_participant(user_id, username, *, elo=1000, wins=0, losses=0, draws=0) -> None:
-    try:
-        if participants.count_documents({"_id": user_id}, limit=1) != 0:
-            return
-        participants.insert_one(
-            {"_id": user_id, "name": username, "elo": elo,
-             "wins": wins, "losses": losses, "draws": draws}
-        )
-    except Exception as e:
-        print(e)
+rps_players = get_rps_players()
+print("RPS Players:", rps_players)
+rps_table = {"rock": 0, "paper": 1, "scissors": 2}
 
 
-def calc_rps_result(player1_choice, player2_choice) -> int:
+def rps_result(player1_choice: str, player2_choice: str) -> int:
     if player1_choice == player2_choice:
         return 0
-    rps_idx = {"rock": 0, "paper": 1, "scissors": 2}
-    return (rps_idx[player1_choice] - rps_idx[player2_choice]) % 3
+    return (rps_table[player1_choice] - rps_table[player2_choice]) % 3
 
 
-def update_elo_rating(player1_id: int, player2_id: int, result: int) -> dict:
-    if result not in {1, 2}:
+def update_ratings(player1: RPSPlayer, player2: RPSPlayer, result: int) -> dict:
+    if result == 1:
+        winner = player1
+        loser = player2
+    elif result == 2:
+        winner = player2
+        loser = player1
+    else:
         print(f"Result is: {result}")
         raise Exception("invalid result, must be either 1 or 2")
-    winner_id = player1_id if result == 1 else player2_id
     winner_payout = rnd.randint(25, 35)
-    winner_elo = participants.find_one_and_update(
-        {"_id": winner_id}, {"$inc": {"elo": winner_payout, "wins": 1}})["elo"] + winner_payout
-    loser_id = player2_id if result == 1 else player1_id
-    loser_payout = rnd.randint(25, 35)
-    loser_elo = participants.find_one_and_update(
-        {"_id": loser_id}, {"$inc": {"elo": -1*loser_payout, "losses": 1}})["elo"] - loser_payout
-    return {"Winner": f"+{winner_payout}", "Loser": f"-{loser_payout}", "WinnerElo": winner_elo, "LoserElo": loser_elo}
+    winner.wins += 1
+    winner.elo += winner_payout
+    loser_payout = rnd.randint(20, 25)
+    loser.losses += 1
+    loser.elo -= loser_payout
+    update_player(winner)
+    update_player(loser)
+    return {"Winner": f"+{winner_payout}", "Loser": f"-{loser_payout}"}
 
 
 class RPSGame(Cog):
@@ -53,20 +50,19 @@ class RPSGame(Cog):
     async def rps(self, interaction: nextcord.Interaction):
         pass
 
-    # Play RPS against a user
     @rps.subcommand(name="vs", description="Challenge a user to Rock-Paper-Scissors")
     async def rps_vs(self, interaction: nextcord.Interaction,
                      choice: str = SlashOption(
                          description="Choose one",
-                         choices={"Rock": "rock", "Paper": "paper", "Scissors": "scissors", "Random": "random"}
-                     ),
+                         choices=("Rock", "Paper", "Scissors", "Random")),
                      p2: nextcord.Member = SlashOption(
                          name="user",
                          description="Choose a user to challenge",
                          default=None
                      )):
+        choice = choice.lower()
         p1 = interaction.user
-        if p1 == p2:  # and not TESTING:
+        if p1 == p2:
             await interaction.send("You can't challenge yourself!", ephemeral=True)
             return
         if p2 and p2.bot:
@@ -75,90 +71,145 @@ class RPSGame(Cog):
         if p1.id in self.current_games:
             await interaction.send("You already have a game running, wait for it to finish.", ephemeral=True)
             return
-        # Send challenge message
         await interaction.send("Challenge sent!", ephemeral=True)
         self.current_games.add(p1.id)
-        embed = nextcord.Embed(title="Rock-Paper-Scissors Challenge!", color=nextcord.Color.blurple())
+        embed = nextcord.Embed(title="Rock-Paper-Scissors Challenge!", color=random_color())
         embed.set_author(name=p1.display_name, icon_url=p1.avatar.url if p1.avatar else None)
-        player_mention = p2.mention if p2 else None
-        embed.description = (f"{p2.mention} you have been challenged by {p1.mention} to play RPS!\n"
-                             f"React with your choice within the next 120 seconds to play.") if p2 else (
-            f"{p1.mention} has sent a challenge to play RPS!\n" 
-            f"React with your choice within the next 120 seconds to play.")
-
-        game_msg = await interaction.channel.send(content=player_mention, embed=embed)
-
-        def check(reaction, user):
-            return (user == p2) and (str(reaction.emoji) in {"🪨", "📰", "✂️", "🔀"}) if p2 else \
-                (not user.bot) and (user != p1) and (str(reaction.emoji) in {"🪨", "📰", "✂️", "🔀"})
-
-        for _ in ("🪨", "📰", "✂️", "🔀"):
-            await game_msg.add_reaction(_)
-        try:
-            user_reaction, reaction_user = await self.bot.wait_for('reaction_add', timeout=120, check=check)
-        except asyncio.TimeoutError:
-            embed.description = f"Challenge timed out."
-            await game_msg.clear_reactions()
-            await game_msg.edit(content=None, embed=embed)
-            await game_msg.delete(delay=10)
+        if p2:
+            player_mention = p2.mention
+            embed.description = (f"{p2.mention} you have been challenged by {p1.mention} to play RPS!\n"
+                                 f"Pick your choice within the next minute to play.")
+            view = RPSGameView(player_id=p1.id, opponent=p2)
+        else:
+            player_mention = None
+            embed.description = (f"{p1.mention} has sent a challenge to play RPS!\n"
+                                 f"Pick your choice within the next minute to play.")
+            view = RPSGameView(player_id=p1.id)
+        game_msg = await interaction.channel.send(content=player_mention, embed=embed, view=view)
+        # Wait for opponent to interact or the view to timeout
+        if await view.wait():
             self.current_games.remove(p1.id)
+            embed.description = f"Challenge timed out."
+            await game_msg.edit(content=None, embed=embed, view=None)
+            await game_msg.delete(delay=10)
             await interaction.edit_original_message(content=f"Challenge timed out.")
             return
-
-        def final_embed(in_embed: nextcord.Embed, game_result: int, gains_dict: dict) -> nextcord.Embed:
-            in_embed.add_field(name=p1.display_name, value=f"**{p1_choice.upper()}**")
-            in_embed.add_field(name="VS", value="**---**")
-            in_embed.add_field(name=p2.display_name, value=f"**{p2_choice.upper()}**")
-            # Draw
-            if game_result not in {1, 2}:
-                return in_embed
-            p1_result = "Winner" if game_result == 1 else "Loser"
-            p2_result = "Loser" if game_result == 1 else "Winner"
-            in_embed.add_field(
-                name=p1_result, value=f"{p1.mention}\nElo: {gains_dict[f'{p1_result}Elo']} ({gains_dict[p1_result]})")
-            in_embed.add_field(name="**---**", value="**---**")
-            in_embed.add_field(
-                name=p2_result, value=f"{p2.mention}\nElo: {gains_dict[f'{p2_result}Elo']} ({gains_dict[p2_result]})")
-            return in_embed
-
-        # Challenge accepted, delete challenge message and set players
-        await game_msg.clear_reactions()
-        add_participant(p1.id, p1.name)
-        # Set player2 to the reactor if the user did not specifically challenge a player
-        p2 = p2 if p2 else reaction_user
-        add_participant(p2.id, p2.name)
+        opponent = view.opponent
+        opponent_choice = view.value
+        # Challenge accepted, set players
+        player1 = f"{p1.id}.{interaction.guild.id}"
+        # Add player1 to database if not already there
+        if player1 not in rps_players:
+            rps_players[player1] = RPSPlayer(id=player1, user_id=p1.id, server_id=interaction.guild.id,
+                                             username=p1.name, elo=1000, wins=0, losses=0, draws=0)
+            insert_new_player(rps_players[player1])
+        # Set player2 to the responding user, if the user did not specifically challenge a player
+        p2 = opponent
+        player2 = f"{p2.id}.{interaction.guild.id}"
+        # Add player2 to database if not already there
+        if player2 not in rps_players:
+            rps_players[player2] = RPSPlayer(id=player2, user_id=p2.id, server_id=interaction.guild.id,
+                                             username=p2.name, elo=1000, wins=0, losses=0, draws=0)
+            insert_new_player(rps_players[player2])
         # Set choices and calculate game result
-        p1_choice = choice if choice != "random" else rnd.choice(["rock", "paper", "scissors"])
-        emoji = str(user_reaction.emoji)
-        emoji_to_choice = {"🪨": "rock", "📰": "paper", "✂️": "scissors"}
-        p2_choice = emoji_to_choice[emoji] if emoji in emoji_to_choice else rnd.choice(["rock", "paper", "scissors"])
-        result = calc_rps_result(p1_choice, p2_choice)
-        # If result is a draw, no calculations done, show result and return
+        p1_choice = rnd.choice(["rock", "paper", "scissors"]) if choice == "random" else choice
+        p2_choice = rnd.choice(["rock", "paper", "scissors"]) if opponent_choice == "random" else opponent_choice
+        # Format embed according to player choices
+        p1_format = f"{p1_choice.upper()} 🔀" if choice == "random" else p1_choice.upper()
+        p2_format = f"{p2_choice.upper()} 🔀" if opponent_choice == "random" else p2_choice.upper()
+        embed.add_field(name=p1.display_name, value=f"**{p1_format}**")
+        embed.add_field(name="VS", value="\u200b")
+        embed.add_field(name=p2.display_name, value=f"**{p2_format}**")
+        result = rps_result(p1_choice, p2_choice)
         if result == 0:
-            embed = final_embed(embed, result, {})
             embed.add_field(name="Result", value="Draw", inline=False)
+            rps_players[player1].draws += 1
+            rps_players[player2].draws += 1
             await game_msg.delete()
             await interaction.channel.send(embed=embed, delete_after=30)
             self.current_games.remove(p1.id)
-            participants.update_one({"_id": p1.id}, {"$inc": {"draws": 1}})
-            participants.update_one({"_id": p2.id}, {"$inc": {"draws": 1}})
             await interaction.edit_original_message(content="Game completed successfully.")
             return
-        # Calculate ELO for players, update player stats and store the ELO gain
-        gains = update_elo_rating(p1.id, p2.id, result)
+        # Calculate ELO for players, update player stats and store the ELO gains in a dictionary for later use
+        gains = update_ratings(rps_players[player1], rps_players[player2], result)
         # Show results and finish the game
-        embed = final_embed(embed, result, gains)
+        p1_result = "Winner" if result == 1 else "Loser"
+        p2_result = "Loser" if result == 1 else "Winner"
+        embed.add_field(name=p1_result, value=f"{p1.mention}\nElo: {rps_players[player1].elo} ({gains[p1_result]})")
+        embed.add_field(name="\u200b", value="\u200b")
+        embed.add_field(name=p2_result, value=f"{p2.mention}\nElo: {rps_players[player2].elo} ({gains[p2_result]})")
         await game_msg.delete()
         await interaction.channel.send(embed=embed, delete_after=30)
         self.current_games.remove(p1.id)
         await interaction.edit_original_message(content="Game completed successfully.")
 
-    # RPS RESET
-    @rps.subcommand(name="reset", description="Reset the game in case of errors")
+    @rps.subcommand(name="leaderboard", description="View the Rock-Paper-Scissors leaderboard")
+    async def rps_leaderboard(self, interaction: nextcord.Interaction,
+                              hidden: bool = SlashOption(
+                                  description="If the leaderboard is shown to everyone or just you",
+                                  default=False)
+                              ):
+        await interaction.send("Loading leaderboard...", ephemeral=hidden)
+        dict_to_sort = {
+            player_id: rps_players[player_id].elo
+            for player_id in rps_players if rps_players[player_id].server_id == interaction.guild.id
+        }
+        players_sorted = sorted(dict_to_sort, key=dict_to_sort.get, reverse=True)
+        leaderboard = StringIO()
+        player_list = []
+        for ranking, player_id in enumerate(players_sorted):
+            stats = (f"Elo: ``{rps_players[player_id].elo}`` | "
+                     f"Wins: ``{rps_players[player_id].wins}`` | "
+                     f"Losses: ``{rps_players[player_id].losses}`` | "
+                     f"Draws: ``{rps_players[player_id].draws}``\n")
+            leaderboard.write(f"#**{ranking + 1}** <@{rps_players[player_id].user_id}>\n{stats}\n")
+            if ranking % 5 == 4:
+                player_list.append(leaderboard.getvalue())
+                leaderboard = StringIO()
+        embed = nextcord.Embed(color=random_color())
+        embed.set_author(name="RPS Leaderboard", icon_url=self.bot.user.avatar.url)
+        if len(player_list) == 0:
+            embed.description = leaderboard.getvalue()
+            await interaction.edit_original_message(content=None, embed=embed)
+            return
+        embed.description = player_list[0]
+        pagination_view = PaginationView(embed=embed, pages=player_list)
+        await interaction.edit_original_message(content=None, embed=embed, view=pagination_view)
+        if await pagination_view.wait():
+            if not hidden:
+                await interaction.delete_original_message()
+            else:
+                await interaction.edit_original_message(view=None)
+
+    @rps.subcommand(name="stats", description="Check a user's RPS stats")
+    async def rps_stats(self, interaction: nextcord.Interaction,
+                        user: nextcord.Member = SlashOption(
+                            description="User to check stats for (Default: yourself)",
+                            default=None)
+                        ):
+        user = user if user else interaction.user
+        player_id = f"{user.id}.{interaction.guild.id}"
+        if player_id not in rps_players:
+            await interaction.send(f"{user.mention} hasn't played Rock-Paper-Scissors yet!", ephemeral=True)
+            return
+        stats = (f"```Elo: {rps_players[player_id].elo}\nWins: {rps_players[player_id].wins}\n"
+                 f"Losses: {rps_players[player_id].losses}\nDraws: {rps_players[player_id].draws}```")
+        embed = nextcord.Embed(description=f"{user.mention}{stats}", color=random_color())
+        embed.set_author(name=user.name, icon_url=user.avatar.url)
+        await interaction.send(embed=embed, ephemeral=True)
+
+    @rps.subcommand(name="reset", description="Reset the game state in case of errors")
     async def rps_reset(self, interaction: nextcord.Interaction):
-        await interaction.send("Reloading...", ephemeral=True)
-        self.current_games.clear()
-        await interaction.edit_original_message(content="Reloaded successfully.")
+        await interaction.send("Resetting game state...", ephemeral=True)
+        try:
+            global rps_players
+            self.current_games.clear()
+            rps_players.clear()
+            rps_players = get_rps_players()
+            await interaction.edit_original_message(content="Reset successfully.")
+        except Exception as e:
+            print(f"Error resetting RPS game state: {e}")
+            await interaction.edit_original_message(content="Error resetting game state.")
 
 
 def setup(bot):
