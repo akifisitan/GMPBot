@@ -1,7 +1,7 @@
 from data.servers import SERVER_IDS
 from data.rps_players import get_rps_players, RPSPlayer, update_player, insert_new_player
-from helpers.colors import random_color
-from helpers.ui import RPSGameView, PaginationView
+from utils.colors import random_color
+from utils.ui import RPSGameView, PaginationView
 import nextcord
 from nextcord import slash_command, SlashOption
 from nextcord.ext.commands import Cog

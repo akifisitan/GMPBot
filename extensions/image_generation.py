@@ -31,7 +31,7 @@ async def image_request(prompt: str, size="256x256", timeout=180) -> str:
         return response['data'][0]['url']
     except Exception as e:
         print(f"Exception: {e}\nResponse: {response}")
-        return "Sorry, either your prompt is bad or I have a skill issue."
+        return "Sorry, either your prompt is bad or there is a server error."
 
 
 class ImageGeneration(Cog):
@@ -59,7 +59,8 @@ class ImageGeneration(Cog):
             response: str = await image_request(prompt=prompt, size=size, timeout=180)
         except Exception as e:
             print(f"Image generation exception : {e}")
-            return await interaction.edit_original_message(content=f"Something went wrong. Please try again later.")
+            await interaction.edit_original_message(content=f"Something went wrong. Please try again later.")
+            return
         await interaction.edit_original_message(content=response)
 
 

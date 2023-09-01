@@ -1,4 +1,4 @@
-from helpers.colors import random_color
+from utils.colors import random_color
 from data.servers import SERVER_IDS
 from data.reminder_jobs import ReminderJob, get_reminder_jobs, insert_new_reminder_job, delete_reminder_job
 import nextcord
@@ -8,7 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime, timedelta
 
 reminders = get_reminder_jobs()
-print("Reminders:", reminders)
+print("Reminders: ", reminders)
 
 
 class ReminderCommands(Cog):
@@ -48,7 +48,7 @@ class ReminderCommands(Cog):
         if seconds <= 10 and minutes == 0 and hours == 0:
             await interaction.send("Please specify a time longer than 10 seconds.", ephemeral=True)
             return
-        await interaction.send("Setting reminder...", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
         try:
             timestamp = int(datetime.timestamp(datetime.now() + timedelta(seconds=seconds,
                                                                           minutes=minutes, hours=hours)))
@@ -58,44 +58,44 @@ class ReminderCommands(Cog):
                               channel_id=interaction.channel.id, message=message)
             self.scheduler.add_job(self.remind_user, 'date', run_date=date, args=[job], id=str(job.id))
             reminders[job.id] = job
-            await interaction.edit_original_message(content=f"Reminder set for <t:{timestamp}>")
+            await interaction.send(content=f"Reminder set for <t:{timestamp}>")
         except Exception as e:
             print(f"Failed to set reminder: {e}")
-            await interaction.edit_original_message(content="Failed to set reminder.")
+            await interaction.send(content="Failed to set reminder.")
 
     @reminder.subcommand(name="list", description="List all your reminders")
     async def reminder_list(self, interaction: Interaction):
-        await interaction.send("Loading...", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
         embed = nextcord.Embed(title="Your Reminders", color=random_color())
         for job in reminders.values():
             if job.user_id == interaction.user.id:
                 embed.add_field(name=f"Job Id: {job.id} Timestamp: <t:{job.timestamp}>",
                                 value=job.message, inline=False)
         if len(embed.fields) == 0:
-            await interaction.edit_original_message(content="You have no reminders.")
+            await interaction.send(content="You have no reminders.")
         else:
-            await interaction.edit_original_message(content=None, embed=embed)
+            await interaction.send(content=None, embed=embed)
 
     @reminder.subcommand(name="delete", description="Delete a reminder you have set")
     async def reminder_delete(self, interaction: Interaction,
                               job_id: str = SlashOption(description="The id of the reminder to delete")
                               ):
-        await interaction.send("Deleting reminder...", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
         int_job_id = int(job_id)
         if int_job_id not in reminders:
-            await interaction.edit_original_message(content="This reminder does not exist.")
+            await interaction.send(content="This reminder does not exist.")
             return
         if reminders[int_job_id].user_id != interaction.user.id:
-            await interaction.edit_original_message(content="You can only delete your own reminders.")
+            await interaction.send(content="You can only delete your own reminders.")
             return
         try:
             self.scheduler.remove_job(job_id)
             reminders.pop(int_job_id)
             delete_reminder_job(int_job_id)
-            await interaction.edit_original_message(content="Reminder deleted.")
+            await interaction.send(content="Reminder deleted.")
         except Exception as e:
-            print("Failed to delete reminder: ", e)
-            await interaction.edit_original_message(content=f"Failed to delete reminder.")
+            print(f"Failed to delete reminder: {e}")
+            await interaction.send(content=f"Failed to delete reminder.")
 
 
 def setup(bot):
